@@ -3,12 +3,12 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::{Frame, Terminal};
 use std::env;
 use std::fs;
 use std::io;
@@ -34,9 +34,8 @@ struct App {
 
 impl App {
     fn new() -> App {
-        // Load commit types from .formal-git/components directory
         let mut types = Vec::new();
-        if let Ok(entries) = fs::read_dir(".formal-git/components") {
+        if let Ok(entries) = fs::read_dir(".pre-form-git/components") {
             for entry in entries.filter_map(Result::ok) {
                 if let Some(name) = entry.file_name().to_str() {
                     types.push(name.to_string());
@@ -87,8 +86,72 @@ impl App {
     }
 }
 
+// Render the UI
+fn draw_ui(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(7), // show full dropdown
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Length(3),
+        ])
+        .split(area);
+
+    // Dropdown for types
+    let items: Vec<ListItem> = app
+        .types
+        .iter()
+        .map(|t| ListItem::new(Span::raw(t)))
+        .collect();
+    let mut state = ratatui::widgets::ListState::default();
+    state.select(Some(app.type_idx));
+    let title_style = if app.focus == Focus::Type {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("Type", title_style)),
+        )
+        .highlight_symbol("➡ ")
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+    f.render_stateful_widget(list, chunks[0], &mut state);
+
+    // Text inputs with cursor positioning
+    let inputs = [
+        ("Scope", &app.scope, Focus::Scope),
+        ("Description", &app.description, Focus::Description),
+        ("Body", &app.body, Focus::Body),
+        ("Footer", &app.footer, Focus::Footer),
+    ];
+
+    for (i, (label, content, focus)) in inputs.iter().enumerate() {
+        let block = Block::default().borders(Borders::ALL).title(Span::styled(
+            *label,
+            if app.focus == *focus {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        ));
+        let para = Paragraph::new(content.as_str()).block(block);
+        f.render_widget(para, chunks[i + 1]);
+        if app.focus == *focus {
+            let x = chunks[i + 1].x + 1 + content.len() as u16;
+            let y = chunks[i + 1].y + 1;
+            f.set_cursor(x, y);
+        }
+    }
+}
+
 fn main() -> Result<(), io::Error> {
-    // Hook mode: argument is path to write
     let args: Vec<String> = env::args().collect();
     let hook_path = if args.len() == 2 {
         Some(args[1].clone())
@@ -96,7 +159,6 @@ fn main() -> Result<(), io::Error> {
         None
     };
 
-    // Terminal setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -105,95 +167,7 @@ fn main() -> Result<(), io::Error> {
 
     let mut app = App::new();
     loop {
-        terminal.draw(|f| {
-            let area = f.area();
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(1)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Length(3),
-                    Constraint::Length(3),
-                    Constraint::Min(3),
-                    Constraint::Length(3),
-                ])
-                .split(area);
-
-            // Type selector
-            let items: Vec<ListItem> = app
-                .types
-                .iter()
-                .map(|t| ListItem::new(Span::raw(t)))
-                .collect();
-            let mut state = ratatui::widgets::ListState::default();
-            state.select(Some(app.type_idx));
-            let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title(Span::styled(
-                    "Type",
-                    if app.focus == Focus::Type {
-                        Style::default().add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    },
-                )))
-                .highlight_symbol("➡ ")
-                .highlight_style(Style::default().add_modifier(Modifier::BOLD));
-            f.render_stateful_widget(list, chunks[0], &mut state);
-
-            // Scope input
-            let scope = Paragraph::new(app.scope.clone()).block(
-                Block::default().borders(Borders::ALL).title(Span::styled(
-                    "Scope",
-                    if app.focus == Focus::Scope {
-                        Style::default().add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    },
-                )),
-            );
-            f.render_widget(scope, chunks[1]);
-
-            // Description input
-            let desc = Paragraph::new(app.description.clone()).block(
-                Block::default().borders(Borders::ALL).title(Span::styled(
-                    "Description",
-                    if app.focus == Focus::Description {
-                        Style::default().add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    },
-                )),
-            );
-            f.render_widget(desc, chunks[2]);
-
-            // Body input
-            let body = Paragraph::new(app.body.clone()).block(
-                Block::default().borders(Borders::ALL).title(Span::styled(
-                    "Body",
-                    if app.focus == Focus::Body {
-                        Style::default().add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    },
-                )),
-            );
-            f.render_widget(body, chunks[3]);
-
-            // Footer input
-            let footer = Paragraph::new(app.footer.clone()).block(
-                Block::default().borders(Borders::ALL).title(Span::styled(
-                    "Footer",
-                    if app.focus == Focus::Footer {
-                        Style::default().add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    },
-                )),
-            );
-            f.render_widget(footer, chunks[4]);
-        })?;
-
-        // Input handling
+        terminal.draw(|f| draw_ui(f, &app))?;
         if event::poll(std::time::Duration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
@@ -223,21 +197,17 @@ fn main() -> Result<(), io::Error> {
                         Focus::Footer => app.footer.push(c),
                         _ => {}
                     },
-                    KeyCode::Backspace => match app.focus {
-                        Focus::Scope => {
+                    KeyCode::Backspace => {
+                        if app.focus == Focus::Scope {
                             app.scope.pop();
-                        }
-                        Focus::Description => {
+                        } else if app.focus == Focus::Description {
                             app.description.pop();
-                        }
-                        Focus::Body => {
+                        } else if app.focus == Focus::Body {
                             app.body.pop();
-                        }
-                        Focus::Footer => {
+                        } else if app.focus == Focus::Footer {
                             app.footer.pop();
                         }
-                        _ => {}
-                    },
+                    }
                     KeyCode::Enter | KeyCode::Esc => break,
                     _ => {}
                 }
@@ -245,7 +215,6 @@ fn main() -> Result<(), io::Error> {
         }
     }
 
-    // Restore terminal
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -254,7 +223,6 @@ fn main() -> Result<(), io::Error> {
     )?;
     terminal.show_cursor()?;
 
-    // Generate or write commit message
     let msg = app.commit_message();
     if let Some(path) = hook_path {
         fs::write(path, msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
