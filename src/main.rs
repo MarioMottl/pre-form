@@ -189,8 +189,8 @@ fn run_tui(hook_path: PathBuf) -> Result<()> {
             .context("failed to draw TUI frame")?;
 
         if event::poll(Duration::from_millis(200)).context("failed to poll for terminal events")? {
-            match event::read().context("failed to read terminal event")? {
-                Event::Key(key) => match key.code {
+            if let Event::Key(key) = event::read().context("failed to read terminal event")? {
+                match key.code {
                     KeyCode::Tab => {
                         app.focus = match app.focus {
                             Focus::Type => Focus::Scope,
@@ -230,8 +230,7 @@ fn run_tui(hook_path: PathBuf) -> Result<()> {
                     }
                     KeyCode::Enter | KeyCode::Esc => break,
                     _ => {}
-                },
-                _ => {}
+                }
             }
         }
     }
@@ -263,7 +262,7 @@ fn run_tui(hook_path: PathBuf) -> Result<()> {
 pub fn install_hook() -> Result<()> {
     let hook_dir = Path::new(".git/hooks");
 
-    fs::create_dir_all(&hook_dir)
+    fs::create_dir_all(hook_dir)
         .with_context(|| format!("failed to create directory `{}`", hook_dir.display()))?;
 
     let hook_path = hook_dir.join("prepare-commit-msg");
