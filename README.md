@@ -2,9 +2,10 @@
 
 ## Clone or install
 ```
-git clone <repo-url> pre-form
+git clone https://github.com/MarioMottl/pre-form
 cd pre-form
 cargo build --release
+cargo instal --path .
 ```
 
 ## Create component files (minimal plain-text)
@@ -15,25 +16,13 @@ touch .formal-git/components/fix
 ```
 add any other types you need
 
-## Run manually
-```
-target/release/pre-form
-```
-Use arrow keys to pick a type, TAB to switch fields, type your message, ENTER to finish.
-
 ## Hook into Git
 
-Copy the hook script into your repo:
+### Prerequisite
+Build and installed pre-form
+
 ```
-mkdir -p .git/hooks
-cat > .git/hooks/prepare-commit-msg << 'EOF'
-#!/bin/sh
-# pre-form Git hook: generates commit message via TUI
-if [ -z "$2" ]; then
-  pre-form "$1"
-fi
-EOF
-chmod +x .git/hooks/prepare-commit-msg
+pre-form install
 ```
 
 Now git commit will launch the TUI and write the message into the commit file.
