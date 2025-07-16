@@ -10,8 +10,25 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use std::env;
-use std::fs;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(name = "pre-form", version, about, long_about = None)]
+struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum Command {
+    Install,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Focus {
@@ -151,14 +168,7 @@ fn draw_ui(f: &mut Frame, app: &App) {
     }
 }
 
-fn main() -> Result<(), io::Error> {
-    let args: Vec<String> = env::args().collect();
-    let hook_path = if args.len() == 2 {
-        Some(args[1].clone())
-    } else {
-        None
-    };
-
+fn run_tui(hook_path: PathBuf) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -224,10 +234,77 @@ fn main() -> Result<(), io::Error> {
     terminal.show_cursor()?;
 
     let msg = app.commit_message();
-    if let Some(path) = hook_path {
-        fs::write(path, msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    } else {
-        println!("{}", msg);
-    }
+    fs::write(hook_path, msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     Ok(())
+}
+
+fn install_hook() -> Result<(), ()> {
+    let hook_dir = Path::new(".git/hooks");
+
+    if let Err(e) = fs::create_dir_all(&hook_dir) {
+        eprintln!(
+            "❌ Failed to create directory {}: {}",
+            hook_dir.display(),
+            e
+        );
+        return Err(());
+    }
+
+    let hook_path = hook_dir.join("prepare-commit-msg");
+
+    let script = r#"#!/bin/sh
+# pre-form Git hook: generates commit message via TUI
+if [ -z "$2" ]; then
+  pre-form "$1"
+fi
+"#;
+
+    match File::create(&hook_path) {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(script.as_bytes()) {
+                eprintln!("❌ Failed to write to {}: {}", hook_path.display(), e);
+                return Err(());
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to create {}: {}", hook_path.display(), e);
+            return Err(());
+        }
+    }
+
+    match fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)) {
+        Ok(_) => {
+            println!(
+                "✅ Git hook installed successfully at {}",
+                hook_path.display()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!(
+                "❌ Failed to set permissions on {}: {}",
+                hook_path.display(),
+                e
+            );
+            Err(())
+        }
+    }
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+
+    match args.command {
+        Some(Command::Install) => {
+            let _ = install_hook();
+            Ok(())
+        }
+        None => {
+            // maybe we want hook_path to be "" in some cases so we can test it without having todo
+            // git commit everytime?
+            let hook_path = env::args().nth(1).expect("No hook_path provided.");
+            let _ = run_tui(hook_path.into());
+            Ok(())
+        }
+    }
 }
