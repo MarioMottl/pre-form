@@ -1,3 +1,5 @@
+use anyhow::{Context, Result};
+use clap::Parser;
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -14,9 +16,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-
-use anyhow::Result;
-use clap::Parser;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(name = "pre-form", version, about, long_about = None)]
@@ -173,18 +173,24 @@ fn draw_ui(f: &mut Frame, app: &App) {
 }
 
 fn run_tui(hook_path: PathBuf) -> Result<()> {
-    enable_raw_mode()?;
+    enable_raw_mode().context("failed to enable raw mode")?;
+
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
+        .context("failed to enter alternate screen / enable mouse capture")?;
+
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend).context("failed to initialize TUI terminal")?;
 
     let mut app = App::new();
     loop {
-        terminal.draw(|f| draw_ui(f, &app))?;
-        if event::poll(std::time::Duration::from_millis(200))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
+        terminal
+            .draw(|f| draw_ui(f, &app))
+            .context("failed to draw TUI frame")?;
+
+        if event::poll(Duration::from_millis(200)).context("failed to poll for terminal events")? {
+            match event::read().context("failed to read terminal event")? {
+                Event::Key(key) => match key.code {
                     KeyCode::Tab => {
                         app.focus = match app.focus {
                             Focus::Type => Focus::Scope,
@@ -224,38 +230,43 @@ fn run_tui(hook_path: PathBuf) -> Result<()> {
                     }
                     KeyCode::Enter | KeyCode::Esc => break,
                     _ => {}
-                }
+                },
+                _ => {}
             }
         }
     }
 
-    disable_raw_mode()?;
+    // restore terminal state
+    disable_raw_mode().context("failed to disable raw mode")?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    )
+    .context("failed to leave alternate screen / disable mouse capture")?;
+    terminal
+        .show_cursor()
+        .context("failed to show terminal cursor")?;
 
+    // write out the commit message
     let msg = app.commit_message();
-    fs::write(hook_path, msg).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    fs::write(&hook_path, msg).with_context(|| {
+        format!(
+            "failed to write commit message to `{}`",
+            hook_path.display()
+        )
+    })?;
+
     Ok(())
 }
 
-fn install_hook() -> Result<(), ()> {
+pub fn install_hook() -> Result<()> {
     let hook_dir = Path::new(".git/hooks");
 
-    if let Err(e) = fs::create_dir_all(&hook_dir) {
-        eprintln!(
-            "❌ Failed to create directory {}: {}",
-            hook_dir.display(),
-            e
-        );
-        return Err(());
-    }
+    fs::create_dir_all(&hook_dir)
+        .with_context(|| format!("failed to create directory `{}`", hook_dir.display()))?;
 
     let hook_path = hook_dir.join("prepare-commit-msg");
-
     let script = r#"#!/bin/sh
 # pre-form Git hook: generates commit message via TUI
 if [ -z "$2" ]; then
@@ -263,36 +274,17 @@ if [ -z "$2" ]; then
 fi
 "#;
 
-    match File::create(&hook_path) {
-        Ok(mut file) => {
-            if let Err(e) = file.write_all(script.as_bytes()) {
-                eprintln!("❌ Failed to write to {}: {}", hook_path.display(), e);
-                return Err(());
-            }
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to create {}: {}", hook_path.display(), e);
-            return Err(());
-        }
-    }
+    let mut file = File::create(&hook_path)
+        .with_context(|| format!("failed to create hook file `{}`", hook_path.display()))?;
 
-    match fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)) {
-        Ok(_) => {
-            println!(
-                "✅ Git hook installed successfully at {}",
-                hook_path.display()
-            );
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!(
-                "❌ Failed to set permissions on {}: {}",
-                hook_path.display(),
-                e
-            );
-            Err(())
-        }
-    }
+    file.write_all(script.as_bytes())
+        .with_context(|| format!("failed to write to `{}`", hook_path.display()))?;
+
+    fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755))
+        .with_context(|| format!("failed to set permissions on `{}`", hook_path.display()))?;
+
+    println!("Git hook installed successfully at {}", hook_path.display());
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -300,15 +292,17 @@ fn main() -> Result<()> {
 
     match args.command {
         Some(Command::Install) => {
-            let _ = install_hook();
-            Ok(())
+            install_hook().context("failed to install git hook")?;
         }
         None => {
-            // maybe we want hook_path to be "" in some cases so we can test it without having todo
-            // git commit everytime?
-            let hook_path = env::args().nth(1).expect("No hook_path provided.");
-            let _ = run_tui(hook_path.into());
-            Ok(())
+            let hook_path = env::args()
+                .nth(1)
+                .context("no hook_path provided; expected path to hooks/prepare-commit-msg")?;
+            let hook_path = PathBuf::from(hook_path);
+
+            run_tui(hook_path).context("failed while running TUI for commit message")?;
         }
     }
+
+    Ok(())
 }
