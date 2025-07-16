@@ -23,6 +23,10 @@ use clap::Parser;
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,
+
+    /// Path passed by Git hook (e.g., .git/COMMIT_EDITMSG)
+    #[arg()]
+    commit_msg_path: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]
