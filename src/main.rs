@@ -4,7 +4,7 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Position};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
@@ -146,7 +146,7 @@ fn draw_ui(f: &mut Frame, app: &App) {
         if app.focus == *focus {
             let x = chunks[i + 1].x + 1 + content.len() as u16;
             let y = chunks[i + 1].y + 1;
-            f.set_cursor(x, y);
+            f.set_cursor_position(Position::new(x, y));
         }
     }
 }
