@@ -26,3 +26,5 @@ pre-form install
 ```
 
 Now git commit will launch the TUI and write the message into the commit file.
+
+## UI
